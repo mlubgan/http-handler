@@ -11,7 +11,12 @@ import Unbox
 
 public typealias CompletionBlock<T> = (T?, Error?) -> Void
 
-public protocol HttpHandlerRequest {
+public enum RequestType {
+    case regular
+    case multipart
+}
+
+public protocol IHTTPHandlerRequest {
 
     func endPoint() -> String
 
@@ -20,6 +25,8 @@ public protocol HttpHandlerRequest {
     func parameters() -> Dictionary<String, Any>?
 
     func headers() -> Dictionary<String, String>
+
+    func type() -> RequestType
 
 }
 
@@ -32,6 +39,7 @@ public enum HttpHandlerError: Error {
     case ServerResponseIsNotUnboxableDictionary(message: String?)
     case ServerReportedUnsuccessfulOperation
     case ServerResponseReturnedError(errors: String?)
+    case custom(message: String)
 }
 
 extension HttpHandlerError: LocalizedError {
@@ -80,6 +88,8 @@ extension HttpHandlerError: LocalizedError {
         case .ServerResponseReturnedError(errors: let errors):
 
             return concatMessage(error: NSLocalizedString("Server response is not unboxable", comment: ""), message: errors)
+        case .custom(let message):
+            return message
         }
     }
 
@@ -87,11 +97,11 @@ extension HttpHandlerError: LocalizedError {
 
 public protocol IHTTPHandler: class {
 
-    func make<T>(request: HttpHandlerRequest, completion: @escaping (T?, Error?) -> Void)
+    func make<T>(request: IHTTPHandlerRequest, completion: @escaping (T?, Error?) -> Void)
 
-    func make<T: Unboxable>(request: HttpHandlerRequest, completion: @escaping (T?, Error?) -> Void)
+    func make<T: Unboxable>(request: IHTTPHandlerRequest, completion: @escaping (T?, Error?) -> Void)
 
-    func make<T>(request: HttpHandlerRequest, completion: @escaping (T?, [AnyHashable: Any], Error?) -> Void)
+    func make<T>(request: IHTTPHandlerRequest, completion: @escaping (T?, [AnyHashable: Any], Error?) -> Void)
 
 }
 
@@ -104,12 +114,31 @@ class Response<T: Unboxable>: Unboxable {
     }
 }
 
+public protocol IHTTPRequestBodyCreator {
+    func buildBody(request: IHTTPHandlerRequest) throws -> Data?
+}
 
-public class HTTPHandler: IHTTPHandler {
+
+public class JSONBodyCreator: IHTTPRequestBodyCreator {
+
+    public init() { }
+
+    public func buildBody(request: IHTTPHandlerRequest) throws -> Data? {
+
+        if let params = request.parameters(), request.method() != "GET" {
+            let paramsData = try JSONSerialization.data(withJSONObject: params, options: JSONSerialization.WritingOptions(rawValue: 0))
+            return paramsData
+        } else {
+            return nil
+        }
+    }
+}
+
+
+open class HTTPHandler: IHTTPHandler {
 
     let urlSession: URLSession
     let baseURL: String
-
 
     public init(baseURL: String) {
         self.baseURL = baseURL
@@ -165,7 +194,7 @@ public class HTTPHandler: IHTTPHandler {
         }
     }
 
-    public func make<T: Unboxable>(request: HttpHandlerRequest, completion: @escaping (T?, Error?) -> Void) {
+    public func make<T: Unboxable>(request: IHTTPHandlerRequest, completion: @escaping (T?, Error?) -> Void) {
 
         self.run(request: request) { (result: UnboxableDictionary?, headers: [AnyHashable: Any], error: Error?) in
 
@@ -187,25 +216,35 @@ public class HTTPHandler: IHTTPHandler {
         }
     }
 
-    func run<T>(request: HttpHandlerRequest, completion: @escaping (T?, [AnyHashable: Any], Error?) -> Void) {
+    public func decorateRequest(_ request: inout URLRequest,
+                                handlerRequest: IHTTPHandlerRequest,
+                                bodyCreator: IHTTPRequestBodyCreator? = JSONBodyCreator()) throws {
+
+        request.httpMethod = handlerRequest.method()
+
+        let headers = handlerRequest.headers()
+
+        for (key, value) in headers {
+            request.addValue(value, forHTTPHeaderField: key)
+        }
+
+        let body = try bodyCreator?.buildBody(request: handlerRequest)
+
+        request.httpBody = body
+    }
+
+    func run<T>(request: IHTTPHandlerRequest, completion: @escaping (T?, [AnyHashable: Any], Error?) -> Void) {
 
         guard let url = URL(string: self.baseURL + request.endPoint()) else { return }
         var urlRequest = URLRequest(url: url, cachePolicy: .reloadIgnoringLocalAndRemoteCacheData, timeoutInterval: 60)
+
         urlRequest.httpMethod = request.method()
 
-        let headers = request.headers()
-
-        for (key, value) in headers {
-            urlRequest.addValue(value, forHTTPHeaderField: key)
-        }
-
-        if let params = request.parameters(), request.method() != "GET" {
-            do {
-                let paramsData = try JSONSerialization.data(withJSONObject: params, options: JSONSerialization.WritingOptions(rawValue: 0))
-                urlRequest.httpBody = paramsData
-            } catch {
-                print("HttpHandler error \(error.localizedDescription)")
-            }
+        do {
+            try decorateRequest(&urlRequest, handlerRequest: request)
+        } catch let error {
+            completion(nil, [:], error)
+            return
         }
 
         HTTPHandler.setVisibleActivitiIndicator(visible: true)
@@ -236,11 +275,11 @@ public class HTTPHandler: IHTTPHandler {
         task.resume()
     }
 
-    public func make<T>(request: HttpHandlerRequest, completion: @escaping (T?, [AnyHashable: Any], Error?) -> Void) {
+    public func make<T>(request: IHTTPHandlerRequest, completion: @escaping (T?, [AnyHashable: Any], Error?) -> Void) {
         self.run(request: request, completion: completion)
     }
 
-    public func make<T>(request: HttpHandlerRequest, completion: @escaping (T?, Error?) -> Void) {
+    public func make<T>(request: IHTTPHandlerRequest, completion: @escaping (T?, Error?) -> Void) {
         self.run(request: request) { (result, headers, error) in
             completion(result, error)
         }
