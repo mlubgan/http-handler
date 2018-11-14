@@ -101,7 +101,7 @@ public protocol IHTTPHandler: class {
 
     func make<T: Unboxable>(request: IHTTPHandlerRequest, completion: @escaping (T?, Error?) -> Void)
 
-    func make<T>(request: IHTTPHandlerRequest, completion: @escaping (T?, [AnyHashable: Any], Error?) -> Void)
+    func make(request: IHTTPHandlerRequest, completion: @escaping ([AnyHashable: Any]?, [AnyHashable: Any], Error?) -> Void)
 
 }
 
@@ -275,7 +275,7 @@ open class HTTPHandler: IHTTPHandler {
         task.resume()
     }
 
-    public func make<T>(request: IHTTPHandlerRequest, completion: @escaping (T?, [AnyHashable: Any], Error?) -> Void) {
+    public func make(request: IHTTPHandlerRequest, completion: @escaping ([AnyHashable: Any]?, [AnyHashable: Any], Error?) -> Void) {
         self.run(request: request, completion: completion)
     }
 
