@@ -16,6 +16,11 @@ public enum RequestType {
     case multipart
 }
 
+public enum Result<T> {
+    case success(T)
+    case failure(Error)
+}
+
 public protocol IHTTPHandlerRequest {
 
     func endPoint() -> String
@@ -100,6 +105,8 @@ public protocol IHTTPHandler: class {
     func make<T>(request: IHTTPHandlerRequest, completion: @escaping (T?, Error?) -> Void)
 
     func make<T: Unboxable>(request: IHTTPHandlerRequest, completion: @escaping (T?, Error?) -> Void)
+
+    func make<T: Unboxable>(request: IHTTPHandlerRequest, completion: @escaping (Result<T>) -> Void)
 
     func make(request: IHTTPHandlerRequest, completion: @escaping ([AnyHashable: Any]?, [AnyHashable: Any], Error?) -> Void)
 
@@ -277,6 +284,30 @@ open class HTTPHandler: IHTTPHandler {
 
     public func make(request: IHTTPHandlerRequest, completion: @escaping ([AnyHashable: Any]?, [AnyHashable: Any], Error?) -> Void) {
         self.run(request: request, completion: completion)
+    }
+
+    public func make<T:Unboxable>(request: IHTTPHandlerRequest, completion: @escaping (Result<T>) -> Void) {
+
+        self.run(request: request) { (result: UnboxableDictionary?, headers: [AnyHashable: Any], error: Error?) in
+
+            if let error = error {
+                completion(Result.failure(error))
+                return
+            }
+            guard let result = result else {
+                completion(Result.failure(HttpHandlerError.NoDataFromServer))
+                return
+            }
+            do {
+                let unboxed: T = try unbox(dictionary: result)
+                completion(Result.success(unboxed))
+
+            } catch let error {
+                completion(Result.failure(error))
+            }
+
+        }
+
     }
 
     public func make<T>(request: IHTTPHandlerRequest, completion: @escaping (T?, Error?) -> Void) {
