@@ -7,6 +7,7 @@
 //
 
 import Foundation
+import Unbox
 
 public enum RequestType {
     case regular
@@ -101,9 +102,9 @@ extension HttpHandlerError: LocalizedError {
 
 public protocol IHTTPHandler: class {
     
-    func make<T: Codable>(request: IHTTPHandlerRequest, completion: @escaping (T?, Error?) -> Void)
-    
     func make<T: Codable>(request: IHTTPHandlerRequest, completion: @escaping (Result<T>) -> Void)
+    
+    func make<T: Unboxable>(request: IHTTPHandlerRequest, completion: @escaping (Result<T>) -> Void)
     
 }
 
@@ -190,23 +191,6 @@ open class HTTPHandler: IHTTPHandler {
         }
     }
     
-    public func make<T: Codable>(request: IHTTPHandlerRequest, completion: @escaping (T?, Error?) -> Void) {
-        
-        self.run(request: request) { (result: T?, headers: [AnyHashable: Any], error: Error?) in
-            
-            if let error = error {
-                completion(nil, error)
-                return
-            }
-            guard let result = result else {
-                completion(nil, HttpHandlerError.NoDataFromServer)
-                return
-            }
-            
-            completion(result, nil)
-        }
-    }
-    
     public func decorateRequest(_ request: inout URLRequest,
                                 handlerRequest: IHTTPHandlerRequest,
                                 bodyCreator: IHTTPRequestBodyCreator? = JSONBodyCreator()) throws {
@@ -280,6 +264,30 @@ open class HTTPHandler: IHTTPHandler {
             }
             
             completion(Result.success(result))
+        }
+        
+    }
+    
+    public func make<T:Unboxable>(request: IHTTPHandlerRequest, completion: @escaping (Result<T>) -> Void) {
+        
+        self.run(request: request) { (result: UnboxableDictionary?, headers: [AnyHashable: Any], error: Error?) in
+            
+            if let error = error {
+                completion(Result.failure(error))
+                return
+            }
+            guard let result = result else {
+                completion(Result.failure(HttpHandlerError.NoDataFromServer))
+                return
+            }
+            do {
+                let unboxed: T = try unbox(dictionary: result)
+                completion(Result.success(unboxed))
+                
+            } catch let error {
+                completion(Result.failure(error))
+            }
+            
         }
         
     }
